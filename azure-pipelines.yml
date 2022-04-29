@@ -2,33 +2,25 @@ trigger:
 - '*'
 
 variables:
-  webRepository: 'web'
-  tag: '$(Build.BuildId)'
+  buildConfiguration: 'Release'
 
-  stage: 'Build'
-  displayName: 'Build and push'
-  jobs:  
+stages:
+- stage: 'Build'
+  displayName: 'Build the web application'
+  jobs: 
   - job: 'Build'
     displayName: 'Build job'
     pool:
+      name: default  
       vmImage: 'ubuntu-20.04'
-    steps:
-    - task: Docker@2
-      displayName: 'Build and push the image to container registry'
-      inputs:
-        command: buildAndPush
-        buildContext: $(Build.Repository.LocalPath)
-        repository: $(webRepository)
-        dockerfile: '$(Build.SourcesDirectory)/Tailspin.SpaceGame.Web/Dockerfile'
-        containerRegistry: 'Container Registry Connection'
-        tags: |
-          $(tag)
+      demands:
+      - npm
 
     variables:
       wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
       dotnetSdkVersion: '5.x'
 
-steps:
+    steps:
     - task: UseDotNet@2
       displayName: 'Use .NET SDK $(dotnetSdkVersion)'
       inputs:
@@ -44,6 +36,9 @@ steps:
 
     - task: gulp@1
       displayName: 'Run gulp tasks'
+      inputs:
+        gulpFile: 'gulpfile.js'
+        gulpjs: node_modules/gulp/bin/gulp.js
 
     - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
       displayName: 'Write build info'
@@ -75,18 +70,26 @@ steps:
       artifact: drop
 
 - stage: 'Deploy'
-  displayName: 'Deploy the container'
+  displayName: 'Deploy the web application'
   dependsOn: Build
   jobs:
-  - job: 'Deploy'
-    displayName: 'Deploy job'
+  - deployment: Deploy
     pool:
+      name: default  
       vmImage: 'ubuntu-20.04'
+    environment: spike
     variables:
     - group: Release
-    steps:
-    - task: AzureWebAppContainer@1
-      inputs:
-       appName: $(WebAppName)
-       azureSubscription: 'Resource Manager - Tailspin - Space Game'
-       imageName: $(RegistryName)/$(webRepository):$(build.buildId)
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+          - task: AzureWebApp@1
+            displayName: 'Azure App Service Deploy: website'
+            inputs:
+              azureSubscription: 'Resource Manager - Tailspin - Space Game'
+              appName: '$(WebAppName)'
+              appType: webAppLinux
+              package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/Tailspin.SpaceGame.Web.zip'
